@@ -209,6 +209,14 @@ impl CliMainWorker {
   }
 
   #[inline]
+  pub async fn execute_side_module_at(
+    &mut self,
+    module_specifier: &ModuleSpecifier,
+  ) -> Result<(), CoreError> {
+    self.worker.execute_side_module_at(module_specifier).await
+  }
+
+  #[inline]
   pub async fn execute_preload_modules(&mut self) -> Result<(), CoreError> {
     self.worker.execute_preload_modules().await
   }

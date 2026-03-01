@@ -1,0 +1,9 @@
+running 2 tests from ./b_test.ts
+running 2 tests from ./a_test.ts
+b 0 ... ok ([WILDLINE])
+a 1 ... ok ([WILDLINE])
+a 0 ... ok ([WILDLINE])
+b 1 ... ok ([WILDLINE])
+
+ok | 4 passed | 0 failed ([WILDLINE])
+[WILDLINE]

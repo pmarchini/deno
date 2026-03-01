@@ -13,6 +13,7 @@ pub struct JunitTestReporter {
   output_path: String,
   // Stores TestCases (i.e. Tests) by the Test ID
   cases: IndexMap<usize, quick_junit::TestCase>,
+  uncaught_errors: Vec<(String, quick_junit::TestCase)>,
   // Stores nodes representing test cases in such a way that can be traversed
   // from child to parent to build the full test name that reflects the test
   // hierarchy.
@@ -30,6 +31,7 @@ impl JunitTestReporter {
       cwd,
       output_path,
       cases: IndexMap::new(),
+      uncaught_errors: Vec::new(),
       test_name_tree: TestNameTree::new(),
       failure_format_options,
     }
@@ -135,7 +137,24 @@ impl TestReporter for JunitTestReporter {
     }
   }
 
-  fn report_uncaught_error(&mut self, _origin: &str, _error: Box<JsError>) {}
+  fn report_uncaught_error(&mut self, origin: &str, error: Box<JsError>) {
+    let mut case = quick_junit::TestCase::new(
+      "(uncaught error)",
+      quick_junit::TestCaseStatus::NonSuccess {
+        kind: quick_junit::NonSuccessKind::Error,
+        message: Some("Uncaught Error".to_string()),
+        ty: None,
+        description: Some(format_test_error(
+          &error,
+          &self.failure_format_options,
+        )),
+        reruns: vec![],
+      },
+    );
+    case.classname = Some(to_relative_path_or_remote_url(&self.cwd, origin));
+    case.set_time(Duration::from_millis(0));
+    self.uncaught_errors.push((origin.to_string(), case));
+  }
 
   fn report_step_register(&mut self, description: &TestStepDescription) {
     self.test_name_tree.add_node(description.clone().into());
@@ -222,6 +241,20 @@ impl TestReporter for JunitTestReporter {
 
       let filename = to_relative_path_or_remote_url(&self.cwd, abs_filename);
 
+      suites
+        .entry(filename.clone())
+        .and_modify(|s| {
+          s.add_test_case(case.clone());
+        })
+        .or_insert_with(|| {
+          let mut suite = quick_junit::TestSuite::new(filename);
+          suite.add_test_case(case.clone());
+          suite
+        });
+    }
+
+    for (origin, case) in &self.uncaught_errors {
+      let filename = to_relative_path_or_remote_url(&self.cwd, origin);
       suites
         .entry(filename.clone())
         .and_modify(|s| {

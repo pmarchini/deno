@@ -1,0 +1,4 @@
+{
+  "args": "test --no-check --test-isolation=none",
+  "output": "main.out"
+}

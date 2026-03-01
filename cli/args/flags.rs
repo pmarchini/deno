@@ -527,6 +527,13 @@ pub enum TestReporterConfig {
   Tap,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TestIsolationMode {
+  #[default]
+  Module,
+  None,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TestFlags {
   pub doc: bool,
@@ -545,6 +552,7 @@ pub struct TestFlags {
   pub reporter: TestReporterConfig,
   pub junit_path: Option<String>,
   pub hide_stacktraces: bool,
+  pub isolation: TestIsolationMode,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4295,6 +4303,13 @@ or <c>**/__tests__/**</>:
         parallel_arg("test modules")
       )
       .arg(
+        Arg::new("test-isolation")
+          .long("test-isolation")
+          .help("UNSTABLE: Select test module isolation mode. 'module' runs each module in its own worker. 'none' runs compatible modules in a shared worker, so top-level test hooks and module state are shared across files")
+          .value_parser(["module", "none"])
+          .help_heading(TEST_HEADING),
+      )
+      .arg(
         Arg::new("files")
           .help("List of file names to run")
           .num_args(0..)
@@ -7020,6 +7035,12 @@ fn test_parse(
   }
 
   let hide_stacktraces = matches.get_flag("hide-stacktraces");
+  let isolation =
+    match matches.remove_one::<String>("test-isolation").as_deref() {
+      Some("none") => TestIsolationMode::None,
+      Some("module") | None => TestIsolationMode::Module,
+      Some(_) => unreachable!(),
+    };
 
   flags.subcommand = DenoSubcommand::Test(TestFlags {
     no_run,
@@ -7038,6 +7059,7 @@ fn test_parse(
     reporter,
     junit_path,
     hide_stacktraces,
+    isolation,
   });
   Ok(())
 }
@@ -11191,6 +11213,7 @@ mod tests {
           reporter: Default::default(),
           junit_path: None,
           hide_stacktraces: false,
+          isolation: TestIsolationMode::Module,
         }),
         no_npm: true,
         no_remote: true,
@@ -11298,6 +11321,7 @@ mod tests {
           reporter: Default::default(),
           junit_path: None,
           hide_stacktraces: false,
+          isolation: TestIsolationMode::Module,
         }),
         type_check_mode: TypeCheckMode::Local,
         permissions: PermissionFlags {
@@ -11342,6 +11366,7 @@ mod tests {
           reporter: Default::default(),
           junit_path: None,
           hide_stacktraces: false,
+          isolation: TestIsolationMode::Module,
         }),
         permissions: PermissionFlags {
           no_prompt: true,
@@ -11480,6 +11505,7 @@ mod tests {
           reporter: Default::default(),
           junit_path: None,
           hide_stacktraces: false,
+          isolation: TestIsolationMode::Module,
         }),
         permissions: PermissionFlags {
           no_prompt: true,
@@ -11517,6 +11543,7 @@ mod tests {
           reporter: Default::default(),
           junit_path: None,
           hide_stacktraces: false,
+          isolation: TestIsolationMode::Module,
         }),
         permissions: PermissionFlags {
           no_prompt: true,
@@ -11553,6 +11580,7 @@ mod tests {
           reporter: Default::default(),
           junit_path: None,
           hide_stacktraces: false,
+          isolation: TestIsolationMode::Module,
         }),
         permissions: PermissionFlags {
           no_prompt: true,
@@ -11596,6 +11624,7 @@ mod tests {
           reporter: Default::default(),
           junit_path: None,
           hide_stacktraces: false,
+          isolation: TestIsolationMode::Module,
         }),
         type_check_mode: TypeCheckMode::Local,
         permissions: PermissionFlags {
@@ -11810,6 +11839,35 @@ mod tests {
         ..Flags::default()
       }
     );
+  }
+
+  #[test]
+  fn test_test_isolation_flag() {
+    let r = flags_from_vec(svec!["deno", "test", "--test-isolation=none"]);
+    assert!(r.is_ok());
+
+    let r = flags_from_vec(svec![
+      "deno",
+      "test",
+      "--parallel",
+      "--test-isolation=module",
+    ]);
+    assert!(r.is_ok());
+  }
+
+  #[test]
+  fn test_test_isolation_help_is_unstable() {
+    let help = match flags_from_vec(svec!["deno", "test", "--help"])
+      .unwrap()
+      .subcommand
+    {
+      DenoSubcommand::Help(help) => help.help.to_string(),
+      _ => unreachable!(),
+    };
+    assert!(help.contains("UNSTABLE: Select test module isolation mode."));
+    assert!(help.contains(
+      "'none' runs compatible modules in a shared worker, so top-level test hooks and module state are shared across files"
+    ));
   }
 
   #[test]

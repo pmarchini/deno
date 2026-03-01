@@ -1,0 +1,4 @@
+{
+  "args": "test --no-check --test-isolation=none a_test.ts b_test.ts",
+  "output": "main.out"
+}

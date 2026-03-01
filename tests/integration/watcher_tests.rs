@@ -1094,6 +1094,74 @@ async fn test_watch_basic() {
 }
 
 #[test(flaky)]
+async fn test_watch_isolation_none() {
+  let t = TempDir::new();
+  let shared_file = t.path().join("shared.js");
+  let a_test = t.path().join("a_test.js");
+  let b_test = t.path().join("b_test.js");
+
+  shared_file.write(
+    r#"
+export const state = { value: "unset" };
+export const marker = 1;
+"#,
+  );
+  a_test.write(
+    r#"
+import { state } from "./shared.js";
+
+state.value = "set by a";
+
+Deno.test("a initializes shared state", () => {});
+"#,
+  );
+  b_test.write(
+    r#"
+import { state } from "./shared.js";
+
+Deno.test("b observes shared state", () => {
+  if (state.value !== "set by a") {
+    throw new Error(`unexpected shared value: ${state.value}`);
+  }
+});
+"#,
+  );
+
+  let mut child = util::deno_cmd()
+    .current_dir(t.path())
+    .arg("test")
+    .arg("--watch")
+    .arg("--no-check")
+    .arg("--test-isolation=none")
+    .arg(t.path())
+    .env("NO_COLOR", "1")
+    .piped_output()
+    .spawn()
+    .unwrap();
+  let (mut stdout_lines, mut stderr_lines) = child_lines(&mut child);
+
+  wait_contains("a initializes shared state", &mut stdout_lines).await;
+  wait_contains("b observes shared state", &mut stdout_lines).await;
+  wait_contains("2 passed | 0 failed", &mut stdout_lines).await;
+  wait_contains("Test finished", &mut stderr_lines).await;
+
+  shared_file.write(
+    r#"
+export const state = { value: "unset" };
+export const marker = 2;
+"#,
+  );
+
+  wait_contains("Restarting", &mut stderr_lines).await;
+  wait_contains("a initializes shared state", &mut stdout_lines).await;
+  wait_contains("b observes shared state", &mut stdout_lines).await;
+  wait_contains("2 passed | 0 failed", &mut stdout_lines).await;
+  wait_contains("Test finished", &mut stderr_lines).await;
+
+  check_alive_then_kill(child);
+}
+
+#[test(flaky)]
 async fn test_watch_doc() {
   let t = TempDir::new();
 

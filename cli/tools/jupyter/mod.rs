@@ -107,7 +107,7 @@ pub async fn kernel(
       permissions,
       vec![
         ops::jupyter::deno_jupyter::init(stdio_tx.clone()),
-        ops::testing::deno_test::init(test_event_sender),
+        ops::testing::deno_test::init(test_event_sender, main_module.clone()),
       ],
       // FIXME(nayeemrmn): Test output capturing currently doesn't work.
       Stdio {

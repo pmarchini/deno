@@ -1,0 +1,24 @@
+running 1 test from ./isolation_none_basic_a.ts
+running 1 test from ./isolation_none_basic_b.ts
+test a ... ok ([WILDCARD])
+test b ... ok ([WILDCARD])
+------- post-test output -------
+[
+  "beforeAll a1",  "beforeAll a2",
+  "beforeAll b1",  "beforeAll b2",
+  "beforeEach a1", "beforeEach a2",
+  "beforeEach b1", "beforeEach b2",
+  "test a",        "afterEach b2",
+  "afterEach b1",  "afterEach a2",
+  "afterEach a1",  "beforeEach a1",
+  "beforeEach a2", "beforeEach b1",
+  "beforeEach b2", "test b",
+  "afterEach b2",  "afterEach b1",
+  "afterEach a2",  "afterEach a1",
+  "afterAll b2",   "afterAll b1",
+  "afterAll a2",   "afterAll a1"
+]
+----- post-test output end -----
+
+ok | 2 passed | 0 failed ([WILDCARD])
+[WILDLINE]

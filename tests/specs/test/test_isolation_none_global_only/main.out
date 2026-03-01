@@ -1,0 +1,7 @@
+running 1 test from ./a_test.ts
+running 0 tests from ./b_test.ts
+a only ... ok ([WILDLINE])
+
+ok | 1 passed | 0 failed | 1 filtered out ([WILDLINE])
+
+error: Test failed because the "only" option was used
