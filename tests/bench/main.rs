@@ -71,6 +71,28 @@ const EXEC_TIME_BENCHMARKS: &[(&str, &[&str], Option<i32>)] = &[
     None,
   ),
   (
+    "test_isolation_module",
+    &[
+      "test",
+      "--reload",
+      "--no-check",
+      "--test-isolation=module",
+      "tests/testdata/bench/test_isolation",
+    ],
+    None,
+  ),
+  (
+    "test_isolation_none",
+    &[
+      "test",
+      "--reload",
+      "--no-check",
+      "--test-isolation=none",
+      "tests/testdata/bench/test_isolation",
+    ],
+    None,
+  ),
+  (
     "workers_startup",
     &[
       "run",
