@@ -4305,7 +4305,7 @@ or <c>**/__tests__/**</>:
       .arg(
         Arg::new("test-isolation")
           .long("test-isolation")
-          .help("Select test module isolation mode. 'module' runs each module in its own worker. 'none' runs compatible modules in a shared worker")
+          .help("UNSTABLE: Select test module isolation mode. 'module' runs each module in its own worker. 'none' runs compatible modules in a shared worker")
           .value_parser(["module", "none"])
           .help_heading(TEST_HEADING),
       )
@@ -11853,6 +11853,20 @@ mod tests {
       "--test-isolation=module",
     ]);
     assert!(r.is_ok());
+  }
+
+  #[test]
+  fn test_test_isolation_help_is_unstable() {
+    let help = match flags_from_vec(svec!["deno", "test", "--help"])
+      .unwrap()
+      .subcommand
+    {
+      DenoSubcommand::Help(help) => help.help.to_string(),
+      _ => unreachable!(),
+    };
+    assert!(help.contains(
+      "UNSTABLE: Select test module isolation mode."
+    ));
   }
 
   #[test]
