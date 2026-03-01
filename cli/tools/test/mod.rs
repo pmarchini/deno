@@ -586,6 +586,11 @@ struct TestSpecifiersOptions {
   isolation: TestIsolationMode,
 }
 
+struct SharedWorkerOptions {
+  shared_member_dir: deno_config::workspace::WorkspaceDirectoryRc,
+  test: TestSpecifiersOptions,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct TestSpecifierOptions {
   pub shuffle: Option<u64>,
@@ -1093,7 +1098,7 @@ async fn run_tests_for_worker_inner(
     tests_to_run.shuffle(&mut SmallRng::seed_from_u64(seed));
   }
 
-  if descs.len() == 0 {
+  if descs.is_empty() {
     event_tracker.plan(TestPlan {
       origin: specifier.to_string(),
       total: tests_to_run.len(),
@@ -1151,8 +1156,10 @@ async fn run_tests_for_worker_inner(
     // Execute beforeEach hooks (FIFO order)
     let mut before_each_hook_errored = false;
 
-    call_hooks(worker, test_hooks.before_each.iter(), |_hook, core_error| {
-      match core_error {
+    call_hooks(
+      worker,
+      test_hooks.before_each.iter(),
+      |_hook, core_error| match core_error {
         CoreErrorKind::Js(err) => {
           before_each_hook_errored = true;
           let test_result = TestResult::Failed(TestFailure::JsError(err));
@@ -1161,8 +1168,8 @@ async fn run_tests_for_worker_inner(
           Ok(())
         }
         err => Err(err.into_box().into()),
-      }
-    })
+      },
+    )
     .await?;
 
     // TODO(bartlomieju): this whole block/binding could be reworked into something better
@@ -1205,8 +1212,10 @@ async fn run_tests_for_worker_inner(
     }
 
     // Execute afterEach hooks (LIFO order)
-    call_hooks(worker, test_hooks.after_each.iter().rev(), |_hook, core_error| {
-      match core_error {
+    call_hooks(
+      worker,
+      test_hooks.after_each.iter().rev(),
+      |_hook, core_error| match core_error {
         CoreErrorKind::Js(err) => {
           let test_result = TestResult::Failed(TestFailure::JsError(err));
           fail_fast_tracker.add_failure();
@@ -1214,8 +1223,8 @@ async fn run_tests_for_worker_inner(
           Ok(())
         }
         err => Err(err.into_box().into()),
-      }
-    })
+      },
+    )
     .await?;
 
     if matches!(result, TestResult::Failed(_)) {
@@ -1262,15 +1271,17 @@ async fn run_tests_for_worker_inner(
   event_tracker.completed()?;
 
   // Execute afterAll hooks (LIFO order)
-  call_hooks(worker, test_hooks.after_all.iter().rev(), |hook, core_error| {
-    match core_error {
+  call_hooks(
+    worker,
+    test_hooks.after_all.iter().rev(),
+    |hook, core_error| match core_error {
       CoreErrorKind::Js(err) => {
         event_tracker.uncaught_error(hook.origin.to_string(), err)?;
         Ok(())
       }
       err => Err(err.into_box().into()),
-    }
-  })
+    },
+  )
   .await?;
 
   Ok(())
@@ -1392,9 +1403,12 @@ async fn test_specifiers_shared_worker(
   specifiers: Vec<ModuleSpecifier>,
   preload_modules: Vec<ModuleSpecifier>,
   require_modules: Vec<ModuleSpecifier>,
-  options: TestSpecifiersOptions,
-  shared_member_dir: deno_config::workspace::WorkspaceDirectoryRc,
+  options: SharedWorkerOptions,
 ) -> Result<(), AnyError> {
+  let SharedWorkerOptions {
+    shared_member_dir,
+    test: options,
+  } = options;
   let (test_event_sender_factory, receiver) = create_test_event_channel();
   let mut cancel_sender = test_event_sender_factory.weak_sender();
   let sigint_handler_handle = spawn(async move {
@@ -1493,8 +1507,9 @@ async fn test_specifiers(
       resolve_shared_worker_member_dir(cli_options, &specifiers)
     {
       if options.parallel {
-        eprintln!(
-          "Warning Shared test isolation does not support concurrent module execution, ignoring --parallel."
+        log::warn!(
+          "{} Shared test isolation does not support concurrent module execution, ignoring --parallel.",
+          colors::yellow("Warning")
         );
       }
       return test_specifiers_shared_worker(
@@ -1504,14 +1519,17 @@ async fn test_specifiers(
         specifiers,
         preload_modules,
         require_modules,
-        options,
-        shared_member_dir,
+        SharedWorkerOptions {
+          shared_member_dir,
+          test: options,
+        },
       )
       .await;
     }
 
-    eprintln!(
-      "Warning Shared test isolation is not supported across multiple workspace members, falling back to module isolation."
+    log::warn!(
+      "{} Shared test isolation is not supported across multiple workspace members, falling back to module isolation.",
+      colors::yellow("Warning")
     );
   }
 

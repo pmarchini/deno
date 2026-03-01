@@ -7035,12 +7035,12 @@ fn test_parse(
   }
 
   let hide_stacktraces = matches.get_flag("hide-stacktraces");
-  let isolation = match matches.remove_one::<String>("test-isolation").as_deref()
-  {
-    Some("none") => TestIsolationMode::None,
-    Some("module") | None => TestIsolationMode::Module,
-    Some(_) => unreachable!(),
-  };
+  let isolation =
+    match matches.remove_one::<String>("test-isolation").as_deref() {
+      Some("none") => TestIsolationMode::None,
+      Some("module") | None => TestIsolationMode::Module,
+      Some(_) => unreachable!(),
+    };
 
   flags.subcommand = DenoSubcommand::Test(TestFlags {
     no_run,
@@ -11864,9 +11864,7 @@ mod tests {
       DenoSubcommand::Help(help) => help.help.to_string(),
       _ => unreachable!(),
     };
-    assert!(help.contains(
-      "UNSTABLE: Select test module isolation mode."
-    ));
+    assert!(help.contains("UNSTABLE: Select test module isolation mode."));
     assert!(help.contains(
       "'none' runs compatible modules in a shared worker, so top-level test hooks and module state are shared across files"
     ));

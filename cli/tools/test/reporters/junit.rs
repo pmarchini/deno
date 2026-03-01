@@ -144,7 +144,10 @@ impl TestReporter for JunitTestReporter {
         kind: quick_junit::NonSuccessKind::Error,
         message: Some("Uncaught Error".to_string()),
         ty: None,
-        description: Some(format_test_error(&error, &self.failure_format_options)),
+        description: Some(format_test_error(
+          &error,
+          &self.failure_format_options,
+        )),
         reruns: vec![],
       },
     );

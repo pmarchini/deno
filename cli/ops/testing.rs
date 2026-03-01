@@ -268,10 +268,9 @@ mod tests {
   fn test_current_test_origin_overrides_main_module() {
     let mut state = OpState::new(None);
     state.put(ModuleSpecifier::parse("file:///main.ts").unwrap());
-    state.put(CurrentTestOrigin(ModuleSpecifier::parse(
-      "file:///current.ts",
-    )
-    .unwrap()));
+    state.put(CurrentTestOrigin(
+      ModuleSpecifier::parse("file:///current.ts").unwrap(),
+    ));
 
     assert_eq!(
       current_test_origin(&state).to_string(),
