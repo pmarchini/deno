@@ -1,0 +1,17 @@
+running 1 test from ./b_test.ts
+Uncaught error from ./a_test.ts FAILED
+
+ ERRORS 
+
+./a_test.ts (uncaught error)
+error: Error: beforeAll failed
+  throw new Error("beforeAll failed");
+        ^[WILDCARD]
+
+ FAILURES 
+
+./a_test.ts (uncaught error)
+
+FAILED | 0 passed | 1 failed ([WILDLINE])
+
+error: Test failed

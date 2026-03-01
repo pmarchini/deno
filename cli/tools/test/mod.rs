@@ -210,12 +210,17 @@ pub(crate) struct TestContainer {
   test_hooks: TestHooks,
 }
 
+pub(crate) struct TestHook {
+  pub origin: ModuleSpecifier,
+  pub function: v8::Global<v8::Function>,
+}
+
 #[derive(Default)]
 pub(crate) struct TestHooks {
-  pub before_all: Vec<v8::Global<v8::Function>>,
-  pub before_each: Vec<v8::Global<v8::Function>>,
-  pub after_each: Vec<v8::Global<v8::Function>>,
-  pub after_all: Vec<v8::Global<v8::Function>>,
+  pub before_all: Vec<TestHook>,
+  pub before_each: Vec<TestHook>,
+  pub after_each: Vec<TestHook>,
+  pub after_all: Vec<TestHook>,
 }
 
 impl TestContainer {
@@ -231,13 +236,15 @@ impl TestContainer {
   pub fn register_hook(
     &mut self,
     hook_type: String,
+    origin: ModuleSpecifier,
     function: v8::Global<v8::Function>,
   ) {
+    let hook = TestHook { origin, function };
     match hook_type.as_str() {
-      "beforeAll" => self.test_hooks.before_all.push(function),
-      "beforeEach" => self.test_hooks.before_each.push(function),
-      "afterEach" => self.test_hooks.after_each.push(function),
-      "afterAll" => self.test_hooks.after_all.push(function),
+      "beforeAll" => self.test_hooks.before_all.push(hook),
+      "beforeEach" => self.test_hooks.before_each.push(hook),
+      "afterEach" => self.test_hooks.after_each.push(hook),
+      "afterAll" => self.test_hooks.after_all.push(hook),
       _ => {}
     }
   }
@@ -1042,14 +1049,16 @@ fn report_test_plans(
 
 async fn call_hooks<H>(
   worker: &mut MainWorker,
-  hook_fns: impl Iterator<Item = &v8::Global<v8::Function>>,
+  hook_fns: impl Iterator<Item = &TestHook>,
   mut error_handler: H,
 ) -> Result<(), RunTestsForWorkerErr>
 where
-  H: FnMut(CoreErrorKind) -> Result<(), RunTestsForWorkerErr>,
+  H: FnMut(&TestHook, CoreErrorKind) -> Result<(), RunTestsForWorkerErr>,
 {
+  let op_state = worker.js_runtime.op_state();
   for hook_fn in hook_fns {
-    let call = worker.js_runtime.call(hook_fn);
+    set_worker_test_origin(&op_state, hook_fn.origin.clone());
+    let call = worker.js_runtime.call(&hook_fn.function);
     let result = worker
       .js_runtime
       .with_event_loop_promise(call, PollEventLoopOptions::default())
@@ -1057,7 +1066,7 @@ where
     let Err(err) = result else {
       continue;
     };
-    error_handler(err.into_kind())?;
+    error_handler(hook_fn, err.into_kind())?;
     break;
   }
   Ok(())
@@ -1098,11 +1107,11 @@ async fn run_tests_for_worker_inner(
   let sanitizer_helper = sanitizers::create_test_sanitizer_helper(worker);
 
   // Execute beforeAll hooks (FIFO order)
-  call_hooks(worker, test_hooks.before_all.iter(), |core_error| {
+  call_hooks(worker, test_hooks.before_all.iter(), |hook, core_error| {
     tests_to_run = vec![];
     match core_error {
       CoreErrorKind::Js(err) => {
-        event_tracker.uncaught_error(specifier.to_string(), err)?;
+        event_tracker.uncaught_error(hook.origin.to_string(), err)?;
         Ok(())
       }
       err => Err(err.into_box().into()),
@@ -1141,7 +1150,7 @@ async fn run_tests_for_worker_inner(
     // Execute beforeEach hooks (FIFO order)
     let mut before_each_hook_errored = false;
 
-    call_hooks(worker, test_hooks.before_each.iter(), |core_error| {
+    call_hooks(worker, test_hooks.before_each.iter(), |_hook, core_error| {
       match core_error {
         CoreErrorKind::Js(err) => {
           before_each_hook_errored = true;
@@ -1195,7 +1204,7 @@ async fn run_tests_for_worker_inner(
     }
 
     // Execute afterEach hooks (LIFO order)
-    call_hooks(worker, test_hooks.after_each.iter().rev(), |core_error| {
+    call_hooks(worker, test_hooks.after_each.iter().rev(), |_hook, core_error| {
       match core_error {
         CoreErrorKind::Js(err) => {
           let test_result = TestResult::Failed(TestFailure::JsError(err));
@@ -1252,10 +1261,10 @@ async fn run_tests_for_worker_inner(
   event_tracker.completed()?;
 
   // Execute afterAll hooks (LIFO order)
-  call_hooks(worker, test_hooks.after_all.iter().rev(), |core_error| {
+  call_hooks(worker, test_hooks.after_all.iter().rev(), |hook, core_error| {
     match core_error {
       CoreErrorKind::Js(err) => {
-        event_tracker.uncaught_error(specifier.to_string(), err)?;
+        event_tracker.uncaught_error(hook.origin.to_string(), err)?;
         Ok(())
       }
       err => Err(err.into_box().into()),

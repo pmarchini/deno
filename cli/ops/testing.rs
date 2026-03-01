@@ -162,8 +162,9 @@ fn op_register_test_hook(
   #[string] hook_type: String,
   #[scoped] function: v8::Global<v8::Function>,
 ) -> Result<(), JsErrorBox> {
+  let origin = current_test_origin(state);
   let container = state.borrow_mut::<TestContainer>();
-  container.register_hook(hook_type, function);
+  container.register_hook(hook_type, origin, function);
   Ok(())
 }
 
