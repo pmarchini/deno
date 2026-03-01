@@ -201,6 +201,7 @@ pub struct WorkspaceTestOptions {
   pub permit_no_files: bool,
   pub filter: Option<String>,
   pub shuffle: Option<u64>,
+  pub parallel: bool,
   pub concurrent_jobs: NonZeroUsize,
   pub trace_leaks: bool,
   pub reporter: TestReporterConfig,
@@ -213,6 +214,7 @@ impl WorkspaceTestOptions {
   pub fn resolve(test_flags: &TestFlags) -> Self {
     Self {
       permit_no_files: test_flags.permit_no_files,
+      parallel: test_flags.parallel,
       concurrent_jobs: parallelism_count(test_flags.parallel),
       doc: test_flags.doc,
       fail_fast: test_flags.fail_fast,

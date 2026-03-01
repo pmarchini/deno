@@ -574,6 +574,7 @@ pub struct TestSummary {
 #[derive(Debug, Clone)]
 struct TestSpecifiersOptions {
   cwd: Url,
+  parallel: bool,
   concurrent_jobs: NonZeroUsize,
   fail_fast: Option<NonZeroUsize>,
   log_level: Option<log::Level>,
@@ -1491,6 +1492,11 @@ async fn test_specifiers(
     if let Some(shared_member_dir) =
       resolve_shared_worker_member_dir(cli_options, &specifiers)
     {
+      if options.parallel {
+        eprintln!(
+          "Warning Shared test isolation does not support concurrent module execution, ignoring --parallel."
+        );
+      }
       return test_specifiers_shared_worker(
         worker_factory,
         cli_options,
@@ -1881,6 +1887,7 @@ pub async fn run_tests(
           )
         },
       )?,
+      parallel: workspace_test_options.parallel,
       concurrent_jobs: workspace_test_options.concurrent_jobs,
       fail_fast: workspace_test_options.fail_fast,
       log_level,
@@ -2095,6 +2102,7 @@ pub async fn run_tests_with_watch(
                 )
               },
             )?,
+            parallel: workspace_test_options.parallel,
             concurrent_jobs: workspace_test_options.concurrent_jobs,
             fail_fast: workspace_test_options.fail_fast,
             log_level,
