@@ -674,7 +674,10 @@ async fn configure_main_worker(
       require_modules,
       permissions_container,
       vec![
-        ops::testing::deno_test::init(worker_sender.sender),
+        ops::testing::deno_test::init(
+          worker_sender.sender,
+          specifier.clone(),
+        ),
         ops::lint::deno_lint_ext_for_test::init(),
         ops::jupyter::deno_jupyter_for_test::init(sender),
       ],

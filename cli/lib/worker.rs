@@ -880,6 +880,14 @@ impl LibMainWorker {
     self.worker.evaluate_module(id).await
   }
 
+  pub async fn execute_side_module_at(
+    &mut self,
+    module_specifier: &Url,
+  ) -> Result<(), CoreError> {
+    let id = self.worker.preload_side_module(module_specifier).await?;
+    self.worker.evaluate_module(id).await
+  }
+
   pub async fn execute_preload_modules(&mut self) -> Result<(), CoreError> {
     for preload_module_url in self.preload_modules.iter() {
       let id = self.worker.preload_side_module(preload_module_url).await?;

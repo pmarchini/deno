@@ -36,15 +36,34 @@ deno_core::extension!(deno_test,
   ],
   options = {
     sender: TestEventSender,
+    origin: ModuleSpecifier,
   },
   state = |state, options| {
     state.put(options.sender);
+    state.put(CurrentTestOrigin(options.origin));
     state.put(TestContainer::default());
   },
 );
 
 #[derive(Clone)]
+pub(crate) struct CurrentTestOrigin(pub ModuleSpecifier);
+
+#[derive(Clone)]
 struct PermissionsHolder(Uuid, PermissionsContainer);
+
+pub(crate) fn current_test_origin(state: &OpState) -> ModuleSpecifier {
+  state
+    .try_borrow::<CurrentTestOrigin>()
+    .map(|origin| origin.0.clone())
+    .unwrap_or_else(|| state.borrow::<ModuleSpecifier>().clone())
+}
+
+pub(crate) fn set_current_test_origin(
+  state: &mut OpState,
+  specifier: ModuleSpecifier,
+) {
+  state.put(CurrentTestOrigin(specifier));
+}
 
 #[op2(stack_trace)]
 #[serde]
@@ -114,7 +133,7 @@ fn op_register_test(
     )));
   }
   let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-  let origin = state.borrow::<ModuleSpecifier>().to_string();
+  let origin = current_test_origin(state).to_string();
   let description = TestDescription {
     id,
     name,
@@ -151,7 +170,7 @@ fn op_register_test_hook(
 #[op2]
 #[string]
 fn op_test_get_origin(state: &mut OpState) -> String {
-  state.borrow::<ModuleSpecifier>().to_string()
+  current_test_origin(state).to_string()
 }
 
 #[op2(fast)]
@@ -169,7 +188,7 @@ fn op_register_test_step(
   #[string] root_name: String,
 ) -> usize {
   let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-  let origin = state.borrow::<ModuleSpecifier>().to_string();
+  let origin = current_test_origin(state).to_string();
   let description = TestStepDescription {
     id,
     name,
@@ -234,4 +253,28 @@ fn op_test_event_step_result_failed(
       duration,
     ))
     .ok();
+}
+
+#[cfg(test)]
+mod tests {
+  use deno_core::ModuleSpecifier;
+  use deno_core::OpState;
+
+  use super::CurrentTestOrigin;
+  use super::current_test_origin;
+
+  #[test]
+  fn test_current_test_origin_overrides_main_module() {
+    let mut state = OpState::new(None);
+    state.put(ModuleSpecifier::parse("file:///main.ts").unwrap());
+    state.put(CurrentTestOrigin(ModuleSpecifier::parse(
+      "file:///current.ts",
+    )
+    .unwrap()));
+
+    assert_eq!(
+      current_test_origin(&state).to_string(),
+      "file:///current.ts"
+    );
+  }
 }
