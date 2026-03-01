@@ -1,0 +1,8 @@
+Warning Shared test isolation is not supported across multiple workspace members, falling back to module isolation.
+running 1 test from ./package-a/mod.test.ts
+package a sets shared state ... ok ([WILDLINE])
+running 1 test from ./package-b/mod.test.ts
+package b does not observe shared state ... ok ([WILDLINE])
+
+ok | 2 passed | 0 failed ([WILDLINE])
+[WILDLINE]
