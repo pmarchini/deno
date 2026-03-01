@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="deno test" tests="2" failures="0" errors="1" time="[WILDCARD]">
+    <testsuite name="./b_test.ts" tests="1" disabled="1" errors="0" failures="0">
+        <testcase name="never runs" classname="./b_test.ts" line="1" col="6">
+            <skipped/>
+        </testcase>
+    </testsuite>
+    <testsuite name="./a_test.ts" tests="1" disabled="0" errors="1" failures="0">
+        <testcase name="(uncaught error)" classname="./a_test.ts" time="[WILDCARD]">
+            <error message="Uncaught Error">Error: beforeAll failed[WILDCARD]</error>
+        </testcase>
+    </testsuite>
+</testsuites>
+error: Test failed
