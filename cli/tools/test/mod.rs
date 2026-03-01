@@ -69,6 +69,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::args::CliOptions;
 use crate::args::Flags;
 use crate::args::TestFlags;
+use crate::args::TestIsolationMode;
 use crate::args::TestReporterConfig;
 use crate::colors;
 use crate::display;
@@ -85,6 +86,7 @@ use crate::util::fs::collect_specifiers;
 use crate::util::path::get_extension;
 use crate::util::path::is_script_ext;
 use crate::util::path::matches_pattern_or_exact_path;
+use crate::worker::CliMainWorker;
 use crate::worker::CliMainWorkerFactory;
 use crate::worker::CreateCustomWorkerError;
 
@@ -573,6 +575,7 @@ struct TestSpecifiersOptions {
   reporter: TestReporterConfig,
   junit_path: Option<String>,
   hide_stacktraces: bool,
+  isolation: TestIsolationMode,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -605,7 +608,8 @@ impl TestSummary {
 }
 
 fn get_test_reporter(options: &TestSpecifiersOptions) -> Box<dyn TestReporter> {
-  let parallel = options.concurrent_jobs.get() > 1;
+  let parallel = options.isolation == TestIsolationMode::Module
+    && options.concurrent_jobs.get() > 1;
   let failure_format_options = TestFailureFormatOptions {
     hide_stacktraces: options.hide_stacktraces,
     strip_ascii_color: false,
@@ -634,7 +638,7 @@ fn get_test_reporter(options: &TestSpecifiersOptions) -> Box<dyn TestReporter> {
     )),
     TestReporterConfig::Tap => Box::new(TapTestReporter::new(
       options.cwd.clone(),
-      options.concurrent_jobs > NonZeroUsize::new(1).unwrap(),
+      parallel,
       failure_format_options,
     )),
   };
@@ -666,6 +670,47 @@ async fn configure_main_worker(
   options: &TestSpecifierOptions,
   sender: UnboundedSender<jupyter_protocol::messaging::StreamContent>,
 ) -> Result<(Option<CoverageCollector>, MainWorker), CreateCustomWorkerError> {
+  let (mut worker, coverage_collector) = create_main_test_worker(
+    worker_factory,
+    specifier,
+    preload_modules,
+    require_modules,
+    permissions_container,
+    worker_sender,
+    options,
+    sender,
+  )
+  .await?;
+  let op_state = worker.op_state();
+
+  check_worker_execution_result(
+    op_state.clone(),
+    specifier,
+    worker.execute_preload_modules().await,
+  )?;
+  check_worker_execution_result(
+    op_state,
+    specifier,
+    worker.execute_side_module().await,
+  )?;
+
+  let worker = worker.into_main_worker();
+
+  Ok((coverage_collector, worker))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_main_test_worker(
+  worker_factory: Arc<CliMainWorkerFactory>,
+  specifier: &Url,
+  preload_modules: Vec<Url>,
+  require_modules: Vec<Url>,
+  permissions_container: PermissionsContainer,
+  worker_sender: TestEventWorkerSender,
+  options: &TestSpecifierOptions,
+  sender: UnboundedSender<jupyter_protocol::messaging::StreamContent>,
+) -> Result<(CliMainWorker, Option<CoverageCollector>), CreateCustomWorkerError>
+{
   let mut worker = worker_factory
     .create_custom_worker(
       WorkerExecutionMode::Test,
@@ -674,10 +719,7 @@ async fn configure_main_worker(
       require_modules,
       permissions_container,
       vec![
-        ops::testing::deno_test::init(
-          worker_sender.sender,
-          specifier.clone(),
-        ),
+        ops::testing::deno_test::init(worker_sender.sender, specifier.clone()),
         ops::lint::deno_lint_ext_for_test::init(),
         ops::jupyter::deno_jupyter_for_test::init(sender),
       ],
@@ -699,23 +741,29 @@ async fn configure_main_worker(
       .map_err(|e| CoreErrorKind::Js(e).into_box())?;
   }
 
-  let op_state = worker.op_state();
+  Ok((worker, coverage_collector))
+}
 
-  let check_res =
-    |res: Result<(), CoreError>| match res.map_err(|err| err.into_kind()) {
-      Ok(()) => Ok(()),
-      Err(CoreErrorKind::Js(err)) => TestEventTracker::new(op_state.clone())
-        .uncaught_error(specifier.to_string(), err)
-        .map_err(|e| CoreErrorKind::JsBox(JsErrorBox::from_err(e)).into_box()),
-      Err(err) => Err(err.into_box()),
-    };
+fn check_worker_execution_result(
+  op_state: Rc<RefCell<OpState>>,
+  specifier: &Url,
+  res: Result<(), CoreError>,
+) -> Result<(), CoreError> {
+  match res.map_err(|err| err.into_kind()) {
+    Ok(()) => Ok(()),
+    Err(CoreErrorKind::Js(err)) => TestEventTracker::new(op_state)
+      .uncaught_error(specifier.to_string(), err)
+      .map_err(|e| CoreErrorKind::JsBox(JsErrorBox::from_err(e)).into_box()),
+    Err(err) => Err(err.into_box()),
+  }
+}
 
-  check_res(worker.execute_preload_modules().await)?;
-  check_res(worker.execute_side_module().await)?;
-
-  let worker = worker.into_main_worker();
-
-  Ok((coverage_collector, worker))
+fn set_worker_test_origin(
+  op_state: &Rc<RefCell<OpState>>,
+  specifier: ModuleSpecifier,
+) {
+  let mut state = op_state.borrow_mut();
+  ops::testing::set_current_test_origin(&mut state, specifier);
 }
 
 /// Test a single specifier as documentation containing test programs, an executable test module or
@@ -966,6 +1014,32 @@ fn compute_tests_to_run(
   (tests_to_run, used_only)
 }
 
+fn report_test_plans(
+  event_tracker: &TestEventTracker,
+  descs: &TestDescriptions,
+  tests_to_run: &[(&TestDescription, v8::Global<v8::Function>)],
+  used_only: bool,
+) -> Result<(), RunTestsForWorkerErr> {
+  let mut plan_counts = IndexMap::<String, (usize, usize)>::new();
+  for (_, desc) in descs {
+    plan_counts.entry(desc.origin.clone()).or_default().0 += 1;
+  }
+  for (desc, _) in tests_to_run {
+    plan_counts.entry(desc.origin.clone()).or_default().1 += 1;
+  }
+
+  for (origin, (registered, selected)) in plan_counts {
+    event_tracker.plan(TestPlan {
+      origin,
+      total: selected,
+      filtered_out: registered - selected,
+      used_only,
+    })?;
+  }
+
+  Ok(())
+}
+
 async fn call_hooks<H>(
   worker: &mut MainWorker,
   hook_fns: impl Iterator<Item = &v8::Global<v8::Function>>,
@@ -1009,12 +1083,16 @@ async fn run_tests_for_worker_inner(
     tests_to_run.shuffle(&mut SmallRng::seed_from_u64(seed));
   }
 
-  event_tracker.plan(TestPlan {
-    origin: specifier.to_string(),
-    total: tests_to_run.len(),
-    filtered_out: unfiltered - tests_to_run.len(),
-    used_only,
-  })?;
+  if descs.len() == 0 {
+    event_tracker.plan(TestPlan {
+      origin: specifier.to_string(),
+      total: tests_to_run.len(),
+      filtered_out: unfiltered - tests_to_run.len(),
+      used_only,
+    })?;
+  } else {
+    report_test_plans(event_tracker, &descs, &tests_to_run, used_only)?;
+  }
 
   let mut had_uncaught_error = false;
   let sanitizer_helper = sanitizers::create_test_sanitizer_helper(worker);
@@ -1093,7 +1171,7 @@ async fn run_tests_for_worker_inner(
         Ok(r) => r,
         Err(error) => match error.into_kind() {
           CoreErrorKind::Js(js_error) => {
-            event_tracker.uncaught_error(specifier.to_string(), js_error)?;
+            event_tracker.uncaught_error(desc.origin.clone(), js_error)?;
             fail_fast_tracker.add_failure();
             event_tracker.cancelled(desc)?;
             had_uncaught_error = true;
@@ -1190,8 +1268,43 @@ async fn run_tests_for_worker_inner(
 
 static HAS_TEST_RUN_SIGINT_HANDLER: AtomicBool = AtomicBool::new(false);
 
-/// Test a collection of specifiers with test modes concurrently.
-async fn test_specifiers(
+fn prepare_test_specifiers(
+  specifiers: Vec<ModuleSpecifier>,
+  options: &TestSpecifiersOptions,
+) -> Vec<ModuleSpecifier> {
+  if let Some(seed) = options.specifier.shuffle {
+    let mut rng = SmallRng::seed_from_u64(seed);
+    let mut specifiers = specifiers;
+    specifiers.sort();
+    specifiers.shuffle(&mut rng);
+    specifiers
+  } else {
+    specifiers
+  }
+}
+
+fn resolve_shared_worker_member_dir(
+  cli_options: &Arc<CliOptions>,
+  specifiers: &[ModuleSpecifier],
+) -> Option<deno_config::workspace::WorkspaceDirectoryRc> {
+  let mut specifiers = specifiers.iter();
+  let first_specifier = specifiers.next()?;
+  let first_dir = cli_options.workspace().resolve_member_dir(first_specifier);
+  let first_dir_url = first_dir.dir_url().clone();
+  if specifiers.all(|specifier| {
+    *cli_options
+      .workspace()
+      .resolve_member_dir(specifier)
+      .dir_url()
+      == first_dir_url
+  }) {
+    Some(first_dir)
+  } else {
+    None
+  }
+}
+
+async fn test_specifiers_isolated(
   worker_factory: Arc<CliMainWorkerFactory>,
   cli_options: &Arc<CliOptions>,
   permission_desc_parser: &Arc<RuntimePermissionDescriptorParser<CliSys>>,
@@ -1200,16 +1313,6 @@ async fn test_specifiers(
   require_modules: Vec<ModuleSpecifier>,
   options: TestSpecifiersOptions,
 ) -> Result<(), AnyError> {
-  let specifiers = if let Some(seed) = options.specifier.shuffle {
-    let mut rng = SmallRng::seed_from_u64(seed);
-    let mut specifiers = specifiers;
-    specifiers.sort();
-    specifiers.shuffle(&mut rng);
-    specifiers
-  } else {
-    specifiers
-  };
-
   let (test_event_sender_factory, receiver) = create_test_event_channel();
   let concurrent_jobs = options.concurrent_jobs;
 
@@ -1233,9 +1336,6 @@ async fn test_specifiers(
     let cli_options = cli_options.clone();
     let permission_desc_parser = permission_desc_parser.clone();
     spawn_blocking(move || {
-      // Various test files should not share the same permissions in terms of
-      // `PermissionsContainer` - otherwise granting/revoking permissions in one
-      // file would have impact on other files, which is undesirable.
       let permissions =
         cli_options.permissions_options_for_dir(&specifier_dir)?;
       let permissions_container = PermissionsContainer::new(
@@ -1273,6 +1373,143 @@ async fn test_specifiers(
   result??;
 
   Ok(())
+}
+
+async fn test_specifiers_shared_worker(
+  worker_factory: Arc<CliMainWorkerFactory>,
+  cli_options: &Arc<CliOptions>,
+  permission_desc_parser: &Arc<RuntimePermissionDescriptorParser<CliSys>>,
+  specifiers: Vec<ModuleSpecifier>,
+  preload_modules: Vec<ModuleSpecifier>,
+  require_modules: Vec<ModuleSpecifier>,
+  options: TestSpecifiersOptions,
+  shared_member_dir: deno_config::workspace::WorkspaceDirectoryRc,
+) -> Result<(), AnyError> {
+  let (test_event_sender_factory, receiver) = create_test_event_channel();
+  let mut cancel_sender = test_event_sender_factory.weak_sender();
+  let sigint_handler_handle = spawn(async move {
+    deno_signals::ctrl_c().await.unwrap();
+    cancel_sender.send(TestEvent::Sigint).ok();
+  });
+  HAS_TEST_RUN_SIGINT_HANDLER.store(true, Ordering::Relaxed);
+  let reporter = get_test_reporter(&options);
+  let fail_fast_tracker = FailFastTracker::new(options.fail_fast);
+  let worker_sender = test_event_sender_factory.worker();
+  let specifier_options = options.specifier.clone();
+  let cli_options = cli_options.clone();
+  let permission_desc_parser = permission_desc_parser.clone();
+  let shared_worker_specifier = shared_member_dir
+    .dir_url()
+    .join(".deno_test_shared_worker.ts")?;
+
+  let join_handle = spawn_blocking(move || {
+    let permissions =
+      cli_options.permissions_options_for_dir(&shared_member_dir)?;
+    let permissions_container = PermissionsContainer::new(
+      permission_desc_parser.clone(),
+      Permissions::from_options(permission_desc_parser.as_ref(), &permissions)?,
+    );
+    create_and_run_current_thread(async move {
+      let jupyter_channel = tokio::sync::mpsc::unbounded_channel();
+      let (mut worker, coverage_collector) = create_main_test_worker(
+        worker_factory,
+        &shared_worker_specifier,
+        preload_modules,
+        require_modules,
+        permissions_container,
+        worker_sender,
+        &specifier_options,
+        jupyter_channel.0,
+      )
+      .await?;
+
+      let op_state = worker.op_state();
+      let event_tracker = TestEventTracker::new(op_state.clone());
+      check_worker_execution_result(
+        op_state.clone(),
+        &shared_worker_specifier,
+        worker.execute_preload_modules().await,
+      )?;
+
+      for specifier in specifiers {
+        set_worker_test_origin(&op_state, specifier.clone());
+        check_worker_execution_result(
+          op_state.clone(),
+          &specifier,
+          worker.execute_side_module_at(&specifier).await,
+        )?;
+      }
+
+      let mut worker = worker.into_main_worker();
+      test_specifier_inner(
+        &mut worker,
+        coverage_collector,
+        shared_worker_specifier,
+        fail_fast_tracker,
+        &event_tracker,
+        specifier_options,
+      )
+      .await?;
+      event_tracker.force_end_report()?;
+
+      Ok::<(), AnyError>(())
+    })
+  });
+
+  let handler = spawn(async move { report_tests(receiver, reporter).await.0 });
+
+  let (join_result, result) = future::join(join_handle, handler).await;
+  sigint_handler_handle.abort();
+  HAS_TEST_RUN_SIGINT_HANDLER.store(false, Ordering::Relaxed);
+  join_result??;
+  result??;
+
+  Ok(())
+}
+
+/// Test a collection of specifiers with test modes concurrently.
+async fn test_specifiers(
+  worker_factory: Arc<CliMainWorkerFactory>,
+  cli_options: &Arc<CliOptions>,
+  permission_desc_parser: &Arc<RuntimePermissionDescriptorParser<CliSys>>,
+  specifiers: Vec<ModuleSpecifier>,
+  preload_modules: Vec<ModuleSpecifier>,
+  require_modules: Vec<ModuleSpecifier>,
+  options: TestSpecifiersOptions,
+) -> Result<(), AnyError> {
+  let specifiers = prepare_test_specifiers(specifiers, &options);
+  if options.isolation == TestIsolationMode::None {
+    if let Some(shared_member_dir) =
+      resolve_shared_worker_member_dir(cli_options, &specifiers)
+    {
+      return test_specifiers_shared_worker(
+        worker_factory,
+        cli_options,
+        permission_desc_parser,
+        specifiers,
+        preload_modules,
+        require_modules,
+        options,
+        shared_member_dir,
+      )
+      .await;
+    }
+
+    eprintln!(
+      "Warning Shared test isolation is not supported across multiple workspace members, falling back to module isolation."
+    );
+  }
+
+  test_specifiers_isolated(
+    worker_factory,
+    cli_options,
+    permission_desc_parser,
+    specifiers,
+    preload_modules,
+    require_modules,
+    options,
+  )
+  .await
 }
 
 /// Gives receiver back in case it was ended with `TestEvent::ForceEndReport`.
@@ -1642,6 +1879,7 @@ pub async fn run_tests(
       reporter: workspace_test_options.reporter,
       junit_path: workspace_test_options.junit_path,
       hide_stacktraces: workspace_test_options.hide_stacktraces,
+      isolation: workspace_test_options.isolation,
       specifier: TestSpecifierOptions {
         filter: TestFilter::from_flag(&workspace_test_options.filter),
         shuffle: workspace_test_options.shuffle,
@@ -1855,6 +2093,7 @@ pub async fn run_tests_with_watch(
             reporter: workspace_test_options.reporter,
             junit_path: workspace_test_options.junit_path,
             hide_stacktraces: workspace_test_options.hide_stacktraces,
+            isolation: workspace_test_options.isolation,
             specifier: TestSpecifierOptions {
               filter: TestFilter::from_flag(&workspace_test_options.filter),
               shuffle: workspace_test_options.shuffle,
