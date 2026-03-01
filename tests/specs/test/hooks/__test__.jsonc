@@ -39,6 +39,11 @@
       "args": "test async_error.ts",
       "output": "async_error.out",
       "exitCode": 1
+    },
+    "isolation_none_basic": {
+      "args": "test --no-check --test-isolation=none isolation_none_basic_a.ts isolation_none_basic_b.ts",
+      "output": "isolation_none_basic.out",
+      "exitCode": 0
     }
   }
 }

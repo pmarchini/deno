@@ -4305,7 +4305,7 @@ or <c>**/__tests__/**</>:
       .arg(
         Arg::new("test-isolation")
           .long("test-isolation")
-          .help("UNSTABLE: Select test module isolation mode. 'module' runs each module in its own worker. 'none' runs compatible modules in a shared worker")
+          .help("UNSTABLE: Select test module isolation mode. 'module' runs each module in its own worker. 'none' runs compatible modules in a shared worker, so top-level test hooks and module state are shared across files")
           .value_parser(["module", "none"])
           .help_heading(TEST_HEADING),
       )
@@ -11866,6 +11866,9 @@ mod tests {
     };
     assert!(help.contains(
       "UNSTABLE: Select test module isolation mode."
+    ));
+    assert!(help.contains(
+      "'none' runs compatible modules in a shared worker, so top-level test hooks and module state are shared across files"
     ));
   }
 
