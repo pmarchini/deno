@@ -1,0 +1,7 @@
+running 1 test from ./a_test.ts
+running 1 test from ./b_test.ts
+a sees its own origin ... ok ([WILDLINE])
+b sees its own origin ... ok ([WILDLINE])
+
+ok | 2 passed | 0 failed ([WILDLINE])
+[WILDLINE]

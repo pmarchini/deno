@@ -196,9 +196,6 @@ function wrapInner(fn) {
 const registerTestIdRetBuf = new Uint32Array(1);
 const registerTestIdRetBufU8 = new Uint8Array(registerTestIdRetBuf.buffer);
 
-// As long as we're using one isolate per test, we can cache the origin since it won't change
-let cachedOrigin = undefined;
-
 function testInner(
   nameOrFnOrOptions,
   optionsOrFn,
@@ -295,9 +292,7 @@ function testInner(
   // Delete this prop in case the user passed it. It's used to detect steps.
   delete testDesc.parent;
 
-  if (cachedOrigin == undefined) {
-    cachedOrigin = op_test_get_origin();
-  }
+  const origin = op_test_get_origin();
 
   testDesc.location = core.currentUserCallSite();
   testDesc.fn = wrapTest(testDesc);
@@ -317,7 +312,7 @@ function testInner(
     testDesc.sanitizeOnly ?? true,
   );
   testDesc.id = registerTestIdRetBuf[0];
-  testDesc.origin = cachedOrigin;
+  testDesc.origin = origin;
   MapPrototypeSet(testStates, testDesc.id, {
     context: createTestContext(testDesc),
     children: [],
